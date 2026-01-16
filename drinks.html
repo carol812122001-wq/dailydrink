@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>我超愛喝手搖 - 2026 雲端同步版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js" type="module"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js" type="module"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js" type="module"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap');
+        
+        :root {
+            --primary-dark: #005461;
+            --primary: #018790;
+            --primary-light: #00B7B5;
+            --bg-gray: #F4F4F4;
+        }
+
+        body {
+            font-family: 'Noto Sans TC', sans-serif;
+            background-color: var(--bg-gray);
+            color: #334155;
+        }
+
+        .calendar-grid {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 8px;
+        }
+
+        .day-card {
+            aspect-ratio: 1 / 1.1;
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .day-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 10px 15px -3px rgba(1, 135, 144, 0.2);
+        }
+
+        .active-btn {
+            background-color: var(--primary) !important;
+            color: white !important;
+            border-color: var(--primary) !important;
+            box-shadow: 0 4px 6px -1px rgba(1, 135, 144, 0.3);
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 84, 97, 0.6);
+            backdrop-filter: blur(8px);
+            z-index: 50;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+
+        .custom-shadow {
+            box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.05);
+        }
+
+        #loadingOverlay {
+            position: fixed;
+            inset: 0;
+            background: var(--bg-gray);
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            transition: opacity 0.5s ease;
+        }
+    </style>
+</head>
+<body class="p-4 md:p-8">
+
+    <!-- Loading Screen -->
+    <div id="loadingOverlay">
+        <div class="animate-bounce mb-4 text-4xl">🥤</div>
+        <p class="font-bold text-slate-400 animate-pulse">正在連線雲端資料庫...</p>
+    </div>
+
+    <div class="max-w-4xl mx-auto">
+        <!-- Header -->
+        <header class="text-center mb-10">
+            <h1 class="text-4xl font-black mb-2" style="color: var(--primary);">🥤 我超愛喝手搖</h1>
+            <div class="flex items-center justify-center gap-2">
+                <p class="font-bold tracking-[0.2em] text-sm opacity-60" style="color: var(--primary-dark);">2026 CLOUD SYNC</p>
+                <span id="syncStatus" class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+            </div>
+            <p id="userTag" class="text-[10px] mt-2 text-slate-400 font-mono"></p>
+        </header>
+
+        <!-- Annual Summary -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-5 mb-8">
+            <div class="p-6 rounded-[2rem] shadow-xl text-white flex flex-col justify-center" style="background: linear-gradient(135deg, var(--primary-dark), var(--primary));">
+                <p class="text-xs font-bold opacity-80 mb-2 tracking-widest uppercase">Annual Total Cups</p>
+                <p id="annualCount" class="text-5xl font-black">0 <span class="text-xl font-normal">杯</span></p>
+            </div>
+            <div class="p-6 rounded-[2rem] shadow-xl text-white flex flex-col justify-center" style="background: linear-gradient(135deg, var(--primary), var(--primary-light));">
+                <p class="text-xs font-bold opacity-80 mb-2 tracking-widest uppercase">Annual Spending</p>
+                <p id="annualSpending" class="text-5xl font-black"><span class="text-xl font-normal">$</span> 0</p>
+            </div>
+        </div>
+
+        <!-- Month Navigation -->
+        <div class="flex items-center justify-between mb-6 bg-white p-2 rounded-2xl custom-shadow">
+            <button onclick="changeMonth(-1)" class="w-12 h-12 flex items-center justify-center hover:bg-gray-100 rounded-xl transition font-bold" style="color: var(--primary);">❮</button>
+            <h2 id="currentMonthDisplay" class="text-xl font-black text-slate-800">2026年 1月</h2>
+            <button onclick="changeMonth(1)" class="w-12 h-12 flex items-center justify-center hover:bg-gray-100 rounded-xl transition font-bold" style="color: var(--primary);">❯</button>
+        </div>
+
+        <!-- Monthly Subtotal -->
+        <div class="flex justify-center gap-10 mb-6 py-3 px-6 bg-white/50 rounded-full border border-white inline-block mx-auto text-sm font-bold">
+            <div><span style="color: var(--primary-light);">本月小計：</span><span id="monthlyCount" class="ml-2 text-slate-800">0 杯</span></div>
+            <div><span style="color: var(--primary-light);">本月花費：</span><span id="monthlySpending" class="ml-2 text-slate-800">$ 0</span></div>
+        </div>
+
+        <!-- Calendar -->
+        <div class="bg-white p-5 md:p-8 rounded-[2.5rem] custom-shadow mb-10 border border-white">
+            <div class="calendar-grid mb-4">
+                <div class="text-center text-rose-400 font-black text-xs uppercase tracking-tighter">Sun</div>
+                <div class="text-center text-slate-300 font-black text-xs uppercase tracking-tighter">Mon</div>
+                <div class="text-center text-slate-300 font-black text-xs uppercase tracking-tighter">Tue</div>
+                <div class="text-center text-slate-300 font-black text-xs uppercase tracking-tighter">Wed</div>
+                <div class="text-center text-slate-300 font-black text-xs uppercase tracking-tighter">Thu</div>
+                <div class="text-center text-slate-300 font-black text-xs uppercase tracking-tighter">Fri</div>
+                <div class="text-center font-black text-xs uppercase tracking-tighter" style="color: var(--primary-light);">Sat</div>
+            </div>
+            <div id="calendarDays" class="calendar-grid"></div>
+        </div>
+
+        <!-- Rankings Section -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-12">
+            <div class="bg-white p-8 rounded-[2.5rem] custom-shadow">
+                <h3 class="text-lg font-black mb-6 flex items-center" style="color: var(--primary-dark);">
+                    <span class="mr-3 text-2xl">🎖️</span> TOP BRANDS
+                </h3>
+                <div id="brandRankList" class="space-y-4">
+                    <p class="text-slate-300 text-sm italic">等待紀錄中...</p>
+                </div>
+            </div>
+            <div class="bg-white p-8 rounded-[2.5rem] custom-shadow">
+                <h3 class="text-lg font-black mb-6 flex items-center" style="color: var(--primary-dark);">
+                    <span class="mr-3 text-2xl">🥤</span> TOP DRINKS
+                </h3>
+                <div id="itemRankList" class="space-y-4">
+                    <p class="text-slate-300 text-sm italic">等待紀錄中...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Modal -->
+    <div id="editModal" class="modal px-4">
+        <div class="bg-white w-full max-w-lg rounded-[3rem] shadow-2xl max-h-[90vh] overflow-hidden flex flex-col border border-white">
+            <div class="p-8 border-b flex justify-between items-center">
+                <div>
+                    <p class="text-[10px] font-bold text-slate-400 tracking-widest uppercase mb-1">Editing Entry</p>
+                    <h3 id="modalDateTitle" class="text-2xl font-black text-slate-800">日期紀錄</h3>
+                </div>
+                <button onclick="closeModal()" class="w-10 h-10 flex items-center justify-center bg-gray-50 rounded-full text-slate-400 hover:text-slate-600 transition text-2xl">&times;</button>
+            </div>
+            
+            <div class="p-8 space-y-8 overflow-y-auto flex-1 no-scrollbar">
+                <!-- Drink 1 -->
+                <section class="space-y-5">
+                    <div class="flex items-center justify-between">
+                        <span class="flex items-center text-sm font-black uppercase tracking-widest" style="color: var(--primary);">
+                            <span class="w-6 h-6 rounded-full flex items-center justify-center text-[10px] mr-2 text-white" style="background-color: var(--primary);">1</span> 第一杯
+                        </span>
+                        <div class="relative">
+                            <span class="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-300">$</span>
+                            <input type="number" id="price1" placeholder="金額" class="w-24 pl-6 p-2 text-sm bg-gray-50 border-none rounded-xl focus:ring-2 focus:ring-teal-500 outline-none font-bold">
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <input type="text" id="shop1" placeholder="購買品牌" class="p-4 text-sm bg-gray-50 border-none rounded-2xl focus:ring-2 focus:ring-teal-500 outline-none">
+                        <input type="text" id="item1" placeholder="飲品名稱" class="p-4 text-sm bg-gray-50 border-none rounded-2xl focus:ring-2 focus:ring-teal-500 outline-none">
+                    </div>
+                    <div>
+                        <p class="text-[10px] font-black text-slate-400 tracking-widest mb-3 uppercase px-1">Ice Level</p>
+                        <div class="grid grid-cols-3 gap-2" id="iceGroup1">
+                            <button onclick="setVal('ice', 1, '正常')" class="ice-btn-1 py-3 rounded-xl text-xs font-bold bg-gray-50 text-slate-500 hover:bg-gray-100 transition">正常</button>
+                            <button onclick="setVal('ice', 1, '少冰')" class="ice-btn-1 py-3 rounded-xl text-xs font-bold bg-gray-50 text-slate-500 hover:bg-gray-100 transition">少冰</button>
+                            <button onclick="setVal('ice', 1, '微冰')" class="ice-btn-1 py-3 rounded-xl text-xs font-bold bg-gray-50 text-slate-500 hover:bg-gray-100 transition">微冰</button>
+                            <button onclick="setVal('ice', 1, '去冰')" class="ice-btn-1 py-3 rounded-xl text-xs font-bold bg-gray-50 text-slate-500 hover:bg-gray-100 transition">去冰</button>
+                            <button onclick="setVal('ice', 1, '常溫')" class="ice-btn-1 py-3 rounded-xl text-xs font-bold bg-gray-50 text-slate-500 hover:bg-gray-100 transition">常溫</button>
+                            <button onclick="setVal('ice', 1, '熱')" class="ice-btn-1 py-3 rounded-xl text-xs font-bold bg-gray-50 text-slate-500 hover:bg-gray-100 transition">熱</button>
+                        </div>
+                    </div>
+                    <div>
+                        <p class="text-[10px] font-black text-slate-400 tracking-widest mb-3 uppercase px-1">Sugar Level</p>
+                        <div class="grid grid-cols-3 gap-2" id="sugarGroup1">
+                            <button onclick="setVal('sugar', 1, '全糖')" class="sugar-btn-1 py-3 rounded-xl text-xs font-bold bg-gray-50 text-slate-500 hover:bg-gray-100 transition">全糖</button>
+                            <button onclick="setVal('sugar', 1, '少糖')" class="sugar-btn-1 py-3 rounded-xl text-xs font-bold bg-gray-50 text-slate-500 hover:bg-gray-100 transition">少糖</button>
+                            <button onclick="setVal('sugar', 1, '半糖')" class="sugar-btn-1 py-3 rounded-xl text-xs font-bold bg-gray-50 text-slate-500 hover:bg-gray-100 transition">半糖</button>
+                            <button onclick="setVal('sugar', 1, '微糖')" class="sugar-btn-1 py-3 rounded-xl text-xs font-bold bg-gray-50 text-slate-500 hover:bg-gray-100 transition">微糖</button>
+                            <button onclick="setVal('sugar', 1, '一分')" class="sugar-btn-1 py-3 rounded-xl text-xs font-bold bg-gray-50 text-slate-500 hover:bg-gray-100 transition">一分</button>
+                            <button onclick="setVal('sugar', 1, '無糖')" class="sugar-btn-1 py-3 rounded-xl text-xs font-bold bg-gray-50 text-slate-500 hover:bg-gray-100 transition">無糖</button>
+                        </div>
+                    </div>
+                </section>
+
+                <hr class="border-gray-100">
+
+                <!-- Drink 2 -->
+                <section class="space-y-5">
+                    <div class="flex items-center justify-between">
+                        <span class="flex items-center text-sm font-black uppercase tracking-widest" style="color: var(--primary-light);">
+                            <span class="w-6 h-6 rounded-full flex items-center justify-center text-[10px] mr-2 text-white" style="background-color: var(--primary-light);">2</span> 第二杯
+                        </span>
+                        <div class="relative">
+                            <span class="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-300">$</span>
+                            <input type="number" id="price2" placeholder="金額" class="w-24 pl-6 p-2 text-sm bg-gray-50 border-none rounded-xl focus:ring-2 focus:ring-teal-400 outline-none font-bold">
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <input type="text" id="shop2" placeholder="購買品牌" class="p-4 text-sm bg-gray-50 border-none rounded-2xl focus:ring-2 focus:ring-teal-400 outline-none">
+                        <input type="text" id="item2" placeholder="飲品名稱" class="p-4 text-sm bg-gray-50 border-none rounded-2xl focus:ring-2 focus:ring-teal-400 outline-none">
+                    </div>
+                    <div>
+                        <p class="text-[10px] font-black text-slate-400 tracking-widest mb-3 uppercase px-1">Ice Level</p>
+                        <div class="grid grid-cols-3 gap-2" id="iceGroup2">
+                            <button onclick="setVal('ice', 2, '正常')" class="ice-btn-2 py-3 rounded-xl text-xs font-bold bg-gray-50 text-slate-500 hover:bg-gray-100 transition">正常</button>
+                            <button onclick="setVal('ice', 2, '少冰')" class="ice-btn-2 py-3 rounded-xl text-xs font-bold bg-gray-50 text-slate-500 hover:bg-gray-100 transition">少冰</button>
+                            <button onclick="setVal('ice', 2, '微冰')" class="ice-btn-2 py-3 rounded-xl text-xs font-bold bg-gray-50 text-slate-500 hover:bg-gray-100 transition">微冰</button>
+                            <button onclick="setVal('ice', 2, '去冰')" class="ice-btn-2 py-3 rounded-xl text-xs font-bold bg-gray-50 text-slate-500 hover:bg-gray-100 transition">去冰</button>
+                            <button onclick="setVal('ice', 2, '常溫')" class="ice-btn-2 py-3 rounded-xl text-xs font-bold bg-gray-50 text-slate-500 hover:bg-gray-100 transition">常溫</button>
+                            <button onclick="setVal('ice', 2, '熱')" class="ice-btn-2 py-3 rounded-xl text-xs font-bold bg-gray-50 text-slate-500 hover:bg-gray-100 transition">熱</button>
+                        </div>
+                    </div>
+                    <div>
+                        <p class="text-[10px] font-black text-slate-400 tracking-widest mb-3 uppercase px-1">Sugar Level</p>
+                        <div class="grid grid-cols-3 gap-2" id="sugarGroup2">
+                            <button onclick="setVal('sugar', 2, '全糖')" class="sugar-btn-2 py-3 rounded-xl text-xs font-bold bg-gray-50 text-slate-500 hover:bg-gray-100 transition">全糖</button>
+                            <button onclick="setVal('sugar', 2, '少糖')" class="sugar-btn-2 py-3 rounded-xl text-xs font-bold bg-gray-50 text-slate-500 hover:bg-gray-100 transition">少糖</button>
+                            <button onclick="setVal('sugar', 2, '半糖')" class="sugar-btn-2 py-3 rounded-xl text-xs font-bold bg-gray-50 text-slate-500 hover:bg-gray-100 transition">半糖</button>
+                            <button onclick="setVal('sugar', 2, '微糖')" class="sugar-btn-2 py-3 rounded-xl text-xs font-bold bg-gray-50 text-slate-500 hover:bg-gray-100 transition">微糖</button>
+                            <button onclick="setVal('sugar', 2, '一分')" class="sugar-btn-2 py-3 rounded-xl text-xs font-bold bg-gray-50 text-slate-500 hover:bg-gray-100 transition">一分</button>
+                            <button onclick="setVal('sugar', 2, '無糖')" class="sugar-btn-2 py-3 rounded-xl text-xs font-bold bg-gray-50 text-slate-500 hover:bg-gray-100 transition">無糖</button>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <div class="p-8 bg-gray-50 flex gap-4">
+                <button onclick="saveData()" class="flex-1 text-white font-black py-5 rounded-[1.5rem] shadow-lg transition active:scale-[0.98]" style="background-color: var(--primary);">儲存今日紀錄</button>
+                <button onclick="clearDay()" class="px-6 py-5 text-rose-400 font-bold bg-white border border-rose-100 rounded-[1.5rem] hover:bg-rose-50 transition">清空</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, getDoc, collection, query, onSnapshot, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Firebase Config
+        const firebaseConfig = JSON.parse(__firebase_config);
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+        let currentYear = 2026;
+        let currentMonth = 0;
+        let selectedDateKey = "";
+        let drinkData = {};
+        let user = null;
+
+        const tempState = {
+            d1: { ice: "", sugar: "" },
+            d2: { ice: "", sugar: "" }
+        };
+
+        // UI Helpers (Exposed to global window for HTML onclicks)
+        window.changeMonth = (delta) => {
+            currentMonth += delta;
+            if (currentMonth < 0) { currentMonth = 11; currentYear--; }
+            if (currentMonth > 11) { currentMonth = 0; currentYear++; }
+            renderCalendar();
+        };
+
+        window.openModal = (dateKey, dayNum) => {
+            selectedDateKey = dateKey;
+            document.getElementById('modalDateTitle').innerText = `${currentMonth + 1}月 ${dayNum}日`;
+            
+            const data = drinkData[dateKey] || { d1: {}, d2: {} };
+            tempState.d1 = { ...data.d1 };
+            tempState.d2 = { ...data.d2 };
+
+            document.getElementById('shop1').value = data.d1?.shop || "";
+            document.getElementById('item1').value = data.d1?.item || "";
+            document.getElementById('price1').value = data.d1?.price || "";
+            document.getElementById('shop2').value = data.d2?.shop || "";
+            document.getElementById('item2').value = data.d2?.item || "";
+            document.getElementById('price2').value = data.d2?.price || "";
+
+            refreshButtons();
+            document.getElementById('editModal').style.display = 'flex';
+        };
+
+        window.setVal = (type, num, val) => {
+            tempState[`d${num}`][type] = val;
+            refreshButtons();
+        };
+
+        window.closeModal = () => {
+            document.getElementById('editModal').style.display = 'none';
+        };
+
+        window.saveData = async () => {
+            if (!user) return;
+            const d1 = {
+                shop: document.getElementById('shop1').value,
+                item: document.getElementById('item1').value,
+                price: document.getElementById('price1').value,
+                ice: tempState.d1.ice || "",
+                sugar: tempState.d1.sugar || ""
+            };
+            const d2 = {
+                shop: document.getElementById('shop2').value,
+                item: document.getElementById('item2').value,
+                price: document.getElementById('price2').value,
+                ice: tempState.d2.ice || "",
+                sugar: tempState.d2.sugar || ""
+            };
+
+            const dayDocRef = doc(db, 'artifacts', appId, 'users', user.uid, 'drinks', selectedDateKey);
+            
+            try {
+                if (d1.shop || d1.item || d1.price || d2.shop || d2.item || d2.price) {
+                    await setDoc(dayDocRef, { d1, d2, updatedAt: Date.now() });
+                } else {
+                    await deleteDoc(dayDocRef);
+                }
+                closeModal();
+            } catch (e) {
+                console.error("Save error", e);
+            }
+        };
+
+        window.clearDay = async () => {
+            if (!user) return;
+            const dayDocRef = doc(db, 'artifacts', appId, 'users', user.uid, 'drinks', selectedDateKey);
+            await deleteDoc(dayDocRef);
+            closeModal();
+        };
+
+        function refreshButtons() {
+            ['ice', 'sugar'].forEach(type => {
+                [1, 2].forEach(num => {
+                    const val = tempState[`d${num}`][type];
+                    document.querySelectorAll(`.${type}-btn-${num}`).forEach(btn => {
+                        btn.classList.toggle('active-btn', btn.innerText === val);
+                    });
+                });
+            });
+        }
+
+        function renderCalendar() {
+            const daysContainer = document.getElementById('calendarDays');
+            daysContainer.innerHTML = '';
+            const firstDay = new Date(currentYear, currentMonth, 1).getDay();
+            const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
+            document.getElementById('currentMonthDisplay').innerText = `${currentYear}年 ${currentMonth + 1}月`;
+
+            for (let i = 0; i < firstDay; i++) daysContainer.appendChild(document.createElement('div'));
+
+            let monthCups = 0;
+            let monthMoney = 0;
+
+            for (let day = 1; day <= daysInMonth; day++) {
+                const dateKey = `${currentYear}-${String(currentMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                const dayData = drinkData[dateKey];
+                const dayDiv = document.createElement('div');
+                dayDiv.className = `day-card border rounded-2xl p-1 cursor-pointer flex flex-col items-center justify-start overflow-hidden relative transition-all ${dayData ? 'border-teal-100 bg-white shadow-sm' : 'border-slate-50 bg-white'}`;
+                dayDiv.onclick = () => window.openModal(dateKey, day);
+                dayDiv.innerHTML = `<span class="text-[10px] font-black text-slate-300 self-start p-1">${day}</span>`;
+
+                if (dayData) {
+                    const icons = document.createElement('div');
+                    icons.className = "flex flex-wrap justify-center gap-0.5 mt-1";
+                    if (dayData.d1?.shop || dayData.d1?.item) { monthCups++; monthMoney += parseFloat(dayData.d1.price || 0); icons.innerHTML += `🥤`; }
+                    if (dayData.d2?.shop || dayData.d2?.item) { monthCups++; monthMoney += parseFloat(dayData.d2.price || 0); icons.innerHTML += `🥤`; }
+                    dayDiv.appendChild(icons);
+                    const dayCost = (parseFloat(dayData.d1?.price || 0) + parseFloat(dayData.d2?.price || 0));
+                    if(dayCost > 0) {
+                        const costTag = document.createElement('span');
+                        costTag.className = "text-[9px] font-black mt-auto px-1.5 py-0.5 rounded-lg mb-1";
+                        costTag.style.color = 'var(--primary)';
+                        costTag.style.backgroundColor = '#F0FDFA';
+                        costTag.innerText = `$${dayCost}`;
+                        dayDiv.appendChild(costTag);
+                    }
+                }
+                daysContainer.appendChild(dayDiv);
+            }
+            document.getElementById('monthlyCount').innerText = `${monthCups} 杯`;
+            document.getElementById('monthlySpending').innerText = `$ ${monthMoney.toLocaleString()}`;
+        }
+
+        function updateStats() {
+            let totalCups = 0;
+            let totalMoney = 0;
+            const brandCount = {};
+            const itemCount = {};
+
+            Object.values(drinkData).forEach(day => {
+                [day.d1, day.d2].forEach(d => {
+                    if (d && (d.shop || d.item)) {
+                        totalCups++;
+                        totalMoney += parseFloat(d.price || 0);
+                        const s = (d.shop || "").trim();
+                        const i = (d.item || "").trim();
+                        if (s) brandCount[s] = (brandCount[s] || 0) + 1;
+                        if (i) itemCount[i] = (itemCount[i] || 0) + 1;
+                    }
+                });
+            });
+
+            document.getElementById('annualCount').innerText = `${totalCups} 杯`;
+            document.getElementById('annualSpending').innerText = `$ ${totalMoney.toLocaleString()}`;
+
+            const renderRank = (data, containerId) => {
+                const sorted = Object.entries(data).sort((a, b) => b[1] - a[1]).slice(0, 5);
+                const container = document.getElementById(containerId);
+                if (sorted.length === 0) {
+                    container.innerHTML = `<p class="text-slate-300 text-sm italic py-2">目前尚無紀錄</p>`;
+                    return;
+                }
+                container.innerHTML = sorted.map(([name, count], index) => `
+                    <div class="flex items-center justify-between p-4 bg-gray-50 rounded-2xl border border-white">
+                        <div class="flex items-center">
+                            <span class="w-6 h-6 flex items-center justify-center rounded-full font-black text-[10px] mr-3 bg-white text-slate-400 shadow-sm border border-gray-100">${index + 1}</span>
+                            <span class="font-bold text-slate-600">${name}</span>
+                        </div>
+                        <span class="font-black text-xs px-3 py-1 rounded-full text-white" style="background-color: var(--primary-light);">${count} 次</span>
+                    </div>
+                `).join('');
+            };
+            renderRank(brandCount, 'brandRankList');
+            renderRank(itemCount, 'itemRankList');
+        }
+
+        // Firebase Auth Init
+        const initAuth = async () => {
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (e) {
+                console.error("Auth Failed", e);
+            }
+        };
+
+        onAuthStateChanged(auth, (u) => {
+            user = u;
+            if (u) {
+                document.getElementById('userTag').innerText = `SYNC ID: ${u.uid}`;
+                // Start listening to Firestore
+                const q = collection(db, 'artifacts', appId, 'users', u.uid, 'drinks');
+                onSnapshot(q, (snapshot) => {
+                    drinkData = {};
+                    snapshot.forEach(doc => {
+                        drinkData[doc.id] = doc.data();
+                    });
+                    renderCalendar();
+                    updateStats();
+                    document.getElementById('loadingOverlay').style.opacity = '0';
+                    setTimeout(() => document.getElementById('loadingOverlay').style.display = 'none', 500);
+                }, (err) => {
+                    console.error("Firestore Listen Error", err);
+                });
+            }
+        });
+
+        initAuth();
+    </script>
+</body>
+</html>
